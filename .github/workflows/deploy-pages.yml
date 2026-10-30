@@ -1,0 +1,77 @@
+name: Deploy GateLab to GitHub Pages
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: true
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Check out the public GateLab release
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
+        with:
+          repository: david-priest/GateLab
+          ref: ea60c8d7c61844065a03d78aa8a44a494be1894f # GateLab 0.10.1
+          path: app
+          submodules: recursive
+          persist-credentials: false
+
+      - name: Set up Node.js
+        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6
+        with:
+          node-version: lts/*
+          cache: npm
+          cache-dependency-path: app/package-lock.json
+
+      - name: Install dependencies
+        working-directory: app
+        run: npm ci
+
+      - name: Build for the root URL
+        working-directory: app
+        run: npm run build -- --base=/
+
+      - name: Include source provenance and licenses
+        working-directory: app
+        run: |
+          cp LICENSE THIRD-PARTY-NOTICES.md dist/
+          mkdir -p dist/third-party-licenses/GateLabR
+          cp vendor/GateLabR/LICENSE dist/third-party-licenses/GateLabR/
+          find node_modules -type f \( -iname 'license*' -o -iname 'copying*' \) \
+            -exec cp --parents '{}' dist/third-party-licenses/ \;
+          node --input-type=module <<'JS'
+          import { writeFileSync } from 'node:fs';
+          import { execFileSync } from 'node:child_process';
+          writeFileSync('dist/source.json', JSON.stringify({
+            repository: 'https://github.com/david-priest/GateLab',
+            commit: execFileSync('git', ['rev-parse', 'HEAD'], { encoding: 'utf8' }).trim(),
+          }, null, 2) + '\n');
+          JS
+
+      - name: Configure GitHub Pages
+        uses: actions/configure-pages@45bfe0192ca1faeb007ade9deae92b16b8254a0d # v6
+
+      - name: Upload site artifact
+        uses: actions/upload-pages-artifact@fc324d3547104276b827a68afc52ff2a11cc49c9 # v5
+        with:
+          path: app/dist
+          retention-days: 1
+
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@cd2ce8fcbc39b97be8ca5fce6e763baed58fa128 # v5
